@@ -1,0 +1,250 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb,amsthm,pxfonts,listings,color}
+\usepackage[colorlinks]{hyperref}
+\definecolor{gray}{rgb}{0.6,0.6,0.6}
+
+\usepackage{caption}
+\DeclareCaptionFormat{listing}{\llap{\color{gray}#1\hspace{10pt}}\tt{}#3}
+\captionsetup[lstlisting]{format=listing, singlelinecheck=false, margin=0pt, font={bf}}
+
+\lstset{columns=fixed,basicstyle={\tt},numbers=left,firstnumber=auto,basewidth=0.5em,showstringspaces=false,numberstyle={\color{gray}\scriptsize}}
+
+\newcommand{\Ref}[2]{\hyperref[#2]{#1 \ref*{#2}}}
+
+\lstnewenvironment{asmcode}       {}{}
+\lstnewenvironment{cppcode}       {\lstset{language=c++}}{}
+\lstnewenvironment{javacode}      {\lstset{language=java}}{}
+\lstnewenvironment{javascriptcode}{}{}
+\lstnewenvironment{htmlcode}      {\lstset{language=html}}{}
+\lstnewenvironment{perlcode}      {\lstset{language=perl}}{}
+\lstnewenvironment{resourcecode}{}{}
+
+\title{{\tt call/cc} in Ten Minutes}
+\author{Spencer Tipping}
+
+\begin{document}
+\maketitle{}
+\tableofcontents{}
+
+\section{Introducing Continuations}\label{sec:introducing-continuations}
+  In Javascript you often make AJAX calls to the server, but because these calls don't return immediately you have to specify a callback for the data. The idea of using a callback is sort of
+  like saying, ``I know you aren't going to have any data for me right away and I've got other stuff to do now, but when you do get it send it here.''
+
+  Importantly, it isn't possible to get rid of the callback for AJAX.\footnote{Well OK, you can through a browser hack, but it really is evil. (Worse than {\tt goto}.)} You simply can't say
+  this:
+
+\begin{verbatim}
+// Using jQuery:
+var x = $.getAndWaitForIt('/some/url');
+alert('I just got ' + x + ' from the server');
+\end{verbatim}
+
+  Instead, you write a callback function and put the {\tt alert} in there. The reason for this is that the {\em continuation} of the AJAX call isn't invoked right away. (I'll explain this
+  further in a minute.)
+
+  Contrast this with normal operations like addition. You would also never write this:
+
+\begin{verbatim}
+add(3, 5, function (x) {
+  alert('Finally, we got the value of 3 + 5!');
+});
+\end{verbatim}
+
+  Callback-form is silly for addition because addition is blocking. By the time your addition is finished, the value is available and the code can move on.\footnote{And because Javascript is
+  single-threaded, nothing else can be going on while the addition is happening.} So rather than allocating a callback, you can just say {\tt var x = 3 + 5}. Here, the continuation of {\tt 3 +
+  5} is assigning into {\tt x} and going to the next statement.
+
+\subsection{Getting to the point}\label{sec:introducing-continuations-getting-to-the-point}
+    A continuation, intuitively speaking, is just the next thing that you're going to do. So each of these things is a continuation:
+
+\begin{enumerate}
+\item{An AJAX callback}
+\item{``{\tt var x = }'' in the expression {\tt var x = 3 + 5}}
+\item{{\tt b} in the block \verb|{a; b;}|}
+\end{enumerate}
+
+    Every language needs some way of specifying continuations. If there weren't one, exactly one operation would occur and then your program would stop. Most languages, Javascript included,
+    use sequential execution as their continuation model; so you get items 2 and 3 above without really thinking about it.
+
+\subsection{Continuation-passing style}\label{sec:introducing-continuations-continuation-passing-style}
+    One AJAX callback is bad enough, but suppose you have two of them and one depends on the result of the other. This happens a lot for REST APIs that first give you a list of names, and then
+    require a separate call to get an item from a name:
+
+\begin{verbatim}
+$.getJSON('/people', function (people) {
+  // Let's just get the first person:
+  $.getJSON('/people/' + people[0], function (person) {
+    // And now we can get on with the app
+  });
+});
+\end{verbatim}
+
+    If you've run into this, you may have factored it out into its own function like this:
+
+\begin{verbatim}
+var load_person = function (callback) {
+  $.getJSON('/people', function (people) {
+    $.getJSON('/people/' + people[0], callback);
+  });
+};
+load_person(function (person) {
+  // ...
+});
+\end{verbatim}
+
+    Code written this way passes around {\tt callback}, which is a continuation, so it's said to be written in {\em continuation-passing style} (CPS).
+
+\subsection{CPS-conversion}\label{sec:introducing-continuations-cps-conversion}
+    Any code with a well-defined evaluation order can be converted to CPS. I'll go through some examples:
+
+\subsubsection{Basic sequences}\label{sec:cps-conversion-basic-sequences}
+\begin{verbatim}
+// Regular form:
+var add = function (x, y) {return x + y};
+var x = add(3, 5);
+alert(x);
+
+// CPS:
+var add = function (x, y, k) {k(x + y)};
+add(3, 5, function (x) {
+  alert(x);
+});
+\end{verbatim}
+
+      This example is a good place to start because it illustrates a fundamental difference between CPS and regular code. In regular code, functions return things. In CPS, functions pass
+      things along. You'll probably notice that there isn't a return statement in the CPS-converted {\tt add} function; that's because CPS-converted functions theoretically never return. Any
+      return statement gets turned into another function call.
+
+      Another fundamental thing is that CPS-converted code often uses {\tt k} to name a continuation. This is patently absurd, as ``continuation'' clearly starts with a {\tt c}.
+
+\subsubsection{Composed functions}\label{sec:cps-conversion-composed-functions}
+\begin{verbatim}
+// Regular form:
+var f = function (x) {return x + 1};
+var g = function (x) {return x * 2};
+var composed = function (x) {
+  return f(g(x));
+};
+var x = composed(10);
+alert(x);
+
+// CPS:
+var f = function (x, k) {k(x + 1)};
+var g = function (x, k) {k(x * 2)};
+var composed = function (x, k) {
+  f(x, function (xPrime) {
+    g(xPrime, k);
+  });
+};
+composed(10, function (x) {
+  alert(x);
+});
+\end{verbatim}
+
+      I took a shortcut here, but to make a point. {\tt composed} can be written out longhand like this:
+
+\begin{verbatim}
+var composed = function (x, k) {
+  f(x, function (xPrime) {
+    g(xPrime, function (result) {
+      k(result);
+    });
+  });
+};
+\end{verbatim}
+
+      \noindent However, this misses the point that functions are just places to go. There isn't a reason to use the innermost function because it just ends up calling {\tt k} with whatever
+      you give it.\footnote{In the lambda-calculus, getting rid of the inner function is called $\eta$-reduction, and you can do this safely in any non-pathological language. Javascript is
+      sometimes pathological by this definition.}
+\section{The ``Current'' Continuation}\label{sec:the-current-continuation}
+  I mentioned earlier that ``{\tt var x =}'' is a continuation. This probably seems weird, but it should make sense if you consider that it turns into a function definition in CPS. Returning
+  to the regular world, though, it should become clear that there are a lot of continuations. One per expression, in fact. Each time an expression is evaluated, it sends its value to the
+  ``current continuation''. So, for example, consider the expression {\tt 3 + (4 * 5)}. The ``current continuation'' for {\tt 4 * 5} is {\tt 3 + x}, where {\tt x} is the result.
+
+  Here's where Scheme does something cool. Scheme lets you grab the ``current continuation'' at any point and use it later on. So, for example, consider this code:
+
+\begin{verbatim}
+(display (+ 3 6))
+
+// If you're allergic to Lisp:
+display(3 + 6);
+\end{verbatim}
+
+  \noindent Now let's grab the current continuation for {\tt 6} and call it manually:
+
+\begin{verbatim}
+(display
+  (+ 3 (call/cc (lambda (k)
+         (k 6)))))
+
+// If you're allergic to Lisp:
+display(3 + call_cc(function (k) {k(6)}));
+\end{verbatim}
+
+  \noindent This code does the same thing as the first example. The simplest way to explain what's going on is that {\tt call/cc} gives you a function that sends some value into {\tt
+  call/cc}'s continuation.\footnote{Hence the name, {\tt call-with-current-continuation}.} The data then goes into that continuation's continuation, etc. And that's where things start to get
+  interesting.
+
+\subsection{Escaping continuations}\label{sec:the-current-continuation-escaping-continuations}
+    You're probably familiar with {\tt try} and {\tt catch} from Java-like languages. You can use {\tt call/cc} to emulate these. For example:
+
+\begin{verbatim}
+var might_fail = function () {
+  throw new Error('Oh no! We hit an error!');
+  alert('And this will never be run');
+};
+try {
+  might_fail();
+} catch (e) {
+  alert('This is the continuation of throw');
+}
+\end{verbatim}
+
+    \noindent Now let's write an approximation in CPS with \verb|call_cc|:
+
+\begin{verbatim}
+var might_fail = function (k) {
+  k(new Error('Oh no! We hit an error!'));
+  alert('And this will never be run');
+};
+var e = call_cc(function (k) {
+  might_fail();
+});
+alert(e);
+\end{verbatim}
+
+    This isn't quite like the original because it doesn't manage the bookkeeping of knowing whether an error occurred vs.~was returned, but the important thing is that continuations can bypass
+    normal execution. The continuation that {\tt call/cc} creates returns directly from the {\tt call/cc} and continues from there.
+
+\subsection{Re-entrant continuations}\label{sec:the-current-continuation-re-entrant-continuations}
+    Here's where things get awesome. You know how {\tt call/cc} gives you a function? You can do whatever you want to with that function, including stashing it somewhere to use later. And even
+    better, you can use it multiple times. Here's a simple way to do that (in Scheme, so that you can actually run it):
+
+\begin{verbatim}
+(define (print-lots-of-stuff)
+  (let ((continuation '()))
+    (display (call/cc (lambda (k)
+      (set! continuation k)
+      "Hello there")))    ; If you return a value, it gets returned as usual
+    (newline)
+    (continuation "This will print forever!")))
+(print-lots-of-stuff)     ; This kicks off an infinite loop
+\end{verbatim}
+
+    Here's roughly what's going on when you call {\tt print-lots-of-stuff}:
+
+\begin{enumerate}
+\item{We enter the function and set {\tt continuation} to nil}
+\item{We see the {\tt display} call and create a continuation to call it once the parameter is ready}
+\item{We then pass that continuation into the {\tt (lambda (k) ...)}}
+\item{We store that continuation into {\tt continuation}}
+\item{The {\tt lambda} returns {\tt "Hello there"}, which is then sent to {\tt call/cc}'s continuation}
+\item{{\tt display} is {\tt call/cc}'s continuation, so {\tt Hello there} is displayed}
+\item{{\tt (newline)} is {\tt display}'s continuation, so a newline is printed}
+\item{The string {\tt "This will print forever"} is sent to the continuation in {\tt continuation} \label{item:repeat}}
+\item{{\tt continuation} stores the continuation for {\tt display}, so {\tt This will print forever} is displayed}
+\item{{\tt (newline)} is {\tt display}'s continuation, so a newline is printed}
+\item{Step \ref{item:repeat} happens again, causing an infinite loop}
+\end{enumerate}
+\end{document}

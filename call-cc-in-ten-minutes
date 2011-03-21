@@ -377,7 +377,7 @@ THE SOFTWARE.
 __3c6177256de0fddb721f534c3ad8c0ee
 meta::data('name', 'call-cc-in-ten-minutes');
 meta::data('output-dir', '/tmp');
-meta::data('pdf-output-file', '/tmp/call-cc-in-ten-minutes.fygV/document.pdf');
+meta::data('pdf-output-file', '/tmp/call-cc-in-ten-minutes.2nqu/document.pdf');
 meta::data('pdf-reader', '/usr/bin/evince');
 meta::data('pdftex-command', 'pdflatex -output-directory=__TEMPORARY_DIRECTORY__ __INPUT_FILE__');
 meta::data('quiet', '1');
