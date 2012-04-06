@@ -77,7 +77,9 @@ exit();     // Exits immediately and never returns.
 \begin{verbatim}
 var factorial = function (n, ret) {
   if (n === 0) ret(1);
-  ret(n * factorial(n - 1));
+  factorial(n - 1, function (result) {
+    ret(n * result);
+  });
 };
 
 alert('About to call factorial');
