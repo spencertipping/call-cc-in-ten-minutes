@@ -1929,8 +1929,26 @@ meta::section('introduction', <<'__');
   subdirectory called {\tt .}, which points back to the current directory.}
 
   At first this made no sense to me because it meant that your path would just keep growing forever. But then I realized that programs don't store their path, they store only their current
-  directory (by its inode, or disk-level data structure that represents it). This meant that it didn't matter how you got to a directory, it only mattered where you were and where you could go
-  from there. (The path can be constructed after the fact by continuously {\tt cd}ing into {\tt ..} until the root is reached. Wild, huh?)
+  directory by its inode. This meant that it didn't matter how you got to a directory, it only mattered where you were and where you could go from there.\footnote{The path can be constructed
+  after the fact by continuously {\tt cd}ing into {\tt ..} until the root is reached. Wild, huh?}
+
+  So instead of a call stack working like this:
+
+  - verbatim << end
+    /           cd usr (add usr/)
+    /usr/       cd bin (add bin/)
+    /usr/bin/   cd ..  (remove bin/)
+    /usr/
+  - end
+
+  \noindent it in fact works like this:
+
+  - verbatim << end
+    /             cd usr (follow usr/ pointer)
+    /usr/         cd bin (follow bin/ pointer)
+    /usr/bin/     cd ..  (follow ../ pointer)
+    /usr/bin/../
+  - end
 
   Now imagine that your path is like a function call stack. You {\tt cd} into a subdirectory, you do stuff, and you {\tt cd} back out of it. Logically this resembles a single function call,
   and if {\tt cd ..} were implemented as an ``undo'' of the last {\tt cd} it would indeed be a real stack. However, each {\tt cd} is doing the same thing: It's calling into a subdirectory of
@@ -1961,7 +1979,8 @@ meta::section('return', <<'__');
   - verbatim << end
     var factorial = function (n) {
       if (n === 0) return 1;
-      return n * factorial(n - 1);
+      var result = factorial(n - 1);
+      return n * result;
     };
   - end
 
@@ -1981,12 +2000,15 @@ meta::section('return', <<'__');
     exit();     // Exits immediately and never returns.
   - end
 
-  \noindent And here's what it looks like when we model {\tt return} as a function:
+  \noindent And here's what it looks like when we model {\tt return} as a function:\footnote{My original {\tt factorial} definition was incorrect; thanks to Brian Ollenberger for submitting
+  the correct version shown here.}
 
   - verbatim << end
     var factorial = function (n, ret) {
       if (n === 0) ret(1);
-      ret(n * factorial(n - 1));
+      factorial(n - 1, function (result) {
+        ret(n * result);
+      });
     };
 
     alert('About to call factorial');
